@@ -13,10 +13,17 @@ File EPUB đã được tạo thành công tại: `output/Masterclass: The perfe
 
 ## Cài đặt (Chỉ cần làm 1 lần)
 
-1. Tạo virtual environment và cài dependencies:
+### macOS/Linux
 ```bash
 python3 -m venv venv
 source venv/bin/activate
+pip install -r requirements.txt
+```
+
+### Windows
+```batch
+python -m venv venv
+venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
@@ -49,15 +56,35 @@ Chỉnh sửa file `config.json` nếu cần thay đổi đường dẫn:
 
 ## Sử dụng
 
-### Cách 1: Script nhanh (Khuyến nghị)
+### macOS/Linux
+
+**Cách 1: Script nhanh (Khuyến nghị)**
 ```bash
 ./run.sh
 ```
 
-### Cách 2: Chạy thủ công
+**Cách 2: Chạy thủ công**
 ```bash
 source venv/bin/activate
 python convert.py
+```
+
+### Windows
+
+**Cách 1: Script nhanh (Khuyến nghị)**
+```batch
+run.bat
+```
+
+**Cách 2: Chạy thủ công**
+```batch
+venv\Scripts\activate
+python convert.py
+```
+
+**Lưu ý Windows**: Cần sửa đường dẫn trong `config.json`:
+```json
+"input_folder": "C:/Users/YourName/Downloads/Web the watcher"
 ```
 
 File EPUB sẽ được tạo trong folder `output/`
@@ -81,7 +108,8 @@ epub-converter/
 ├── config.json              # Cấu hình đường dẫn
 ├── convert.py               # Script chính
 ├── requirements.txt         # Python dependencies
-├── run.sh                   # Script chạy nhanh
+├── run.sh                   # Script chạy nhanh (macOS/Linux)
+├── run.bat                  # Script chạy nhanh (Windows)
 └── README.md               # File này
 ```
 
@@ -96,17 +124,22 @@ Nếu muốn chạy trên máy khác hoặc với file HTML khác:
 ## Troubleshooting
 
 **Lỗi: "Config file not found"**
-- Đảm bảo chạy từ folder `/Users/vuongfly/epub-converter`
+- Đảm bảo chạy từ folder chứa project
 
 **Lỗi: "HTML file not found"**
 - Kiểm tra đường dẫn trong `config.json`
 - Đảm bảo file `The Watcher.html` tồn tại
+- Windows: Dùng `C:/Users/...` hoặc `C:\Users\...`
 
-**Lỗi: "Permission denied"**
+**Lỗi: "Permission denied" (macOS/Linux)**
 - Chạy: `chmod +x run.sh`
+
+**Windows: "venv\Scripts\activate" không chạy**
+- Mở PowerShell/CMD as Administrator
+- Hoặc chạy: `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser`
 
 ## Yêu cầu hệ thống
 
-- macOS 
+- macOS/Linux/Windows 
 - Python 3.7+
 - Quyền đọc/ghi file
