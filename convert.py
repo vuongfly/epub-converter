@@ -6,13 +6,14 @@ Converts saved HTML to EPUB format with table of contents
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from urllib.parse import unquote
 from bs4 import BeautifulSoup
 from ebooklib import epub
 
-def load_config(config_path="config.json"):
+def load_config(config_path=Path(__file__).parent / "config.json"):
     """Load configuration from JSON file"""
     try:
         with open(config_path, 'r', encoding='utf-8') as f:
@@ -59,56 +60,38 @@ def extract_toc(soup):
     print(f"Found {len(toc_items)} chapters in TOC")
     return toc_items
 
-def extract_chapter_content(soup, chapter_id, next_chapter_id=None):
-    """Extract content for a specific chapter"""
-    # URL decode the chapter ID
-    chapter_id = unquote(chapter_id)
-    if next_chapter_id:
-        next_chapter_id = unquote(next_chapter_id)
-    
-    # Find the heading with the chapter ID
-    heading = soup.find(id=chapter_id)
-    if not heading:
-        print(f"Warning: Chapter '{chapter_id}' not found!")
-        return ""
-    
-    # Find the parent div containing this chapter's content
-    content_div = heading.find_parent('div', class_='wp-content')
-    if not content_div:
-        print(f"Warning: Content div not found for '{chapter_id}'!")
-        return ""
-    
-    # Start with the heading
-    content_html = f"<h2>{heading.get_text()}</h2>\n"
-    
-    # Collect all content until next chapter or end
-    current = content_div
-    while current:
-        # Get all wp-content divs from this point
-        for elem in current.find_all(['h2', 'p', 'blockquote', 'ul', 'ol']):
-            # Stop if we hit the next chapter
-            if next_chapter_id and elem.get('id') == next_chapter_id:
-                return content_html
-            
-            # Skip the current heading (already added)
-            if elem.get('id') == chapter_id:
-                continue
-            
-            # Add the element HTML
-            content_html += str(elem) + "\n"
-        
-        # Move to next wp-content div
-        next_div = current.find_next_sibling('div')
-        if next_div and 'wp-content' in next_div.get('class', []):
-            current = next_div
-        else:
-            break
-    
-    return content_html
+def extract_chapters(soup, toc_items, base_dir):
+    """Split the article into chapters. Each chapter starts at its <h2> and runs
+    until the next <h2>, across ALL wp-content blocks (each block is a separate
+    sibling-less div, so they must be walked in document order)."""
+    toc_ids = [unquote(t['id']) for t in toc_items]
+    chapters, current, images = {}, None, {}
+    for div in soup.find_all('div', class_='wp-content'):
+        for elem in div.find_all(recursive=False):
+            if elem.name == 'h2' and elem.get('id') in toc_ids:
+                current = chapters.setdefault(elem['id'], [f"<h2>{elem.decode_contents()}</h2>"])
+            elif current is not None:
+                for img in elem.find_all('img'):
+                    src = unquote(img.get('src', ''))
+                    path = (base_dir / src).resolve()
+                    if path.is_file():
+                        name = f"images/{path.name}"
+                        images[name] = path
+                        img['src'] = name
+                        img.attrs.pop('style', None)
+                    else:
+                        print(f"Warning: image '{src}' not found, dropped")
+                        img.decompose()
+                current.append(str(elem))
+    missing = [i for i in toc_ids if i not in chapters]
+    if missing:
+        print(f"Warning: headings not found: {missing}")
+    return [("\n".join(chapters.get(i, [])) if i in chapters else "") for i in toc_ids], images
 
 def clean_html_content(html_content):
     """Clean and format HTML content"""
     # Remove empty paragraphs with only &nbsp;
+    html_content = re.sub(r'<!--.*?-->', '', html_content, flags=re.S)
     html_content = html_content.replace('<p>&nbsp;</p>', '')
     html_content = html_content.replace('<p></p>', '')
     
@@ -120,6 +103,8 @@ def clean_html_content(html_content):
             body {{ font-family: serif; line-height: 1.6; }}
             h2 {{ text-align: center; margin: 2em 0 1em 0; }}
             p {{ text-align: justify; margin: 1em 0; }}
+            img {{ max-width: 100%; }}
+            table, td {{ border: 1px solid #888; border-collapse: collapse; padding: 0.3em; }}
             strong {{ font-weight: bold; }}
             em {{ font-style: italic; }}
         </style>
@@ -131,7 +116,7 @@ def clean_html_content(html_content):
     """
     return styled_html
 
-def create_epub(toc_items, chapters_content, metadata, output_path):
+def create_epub(toc_items, chapters_content, metadata, output_path, images=None):
     """Create EPUB file from chapters"""
     # Create EPUB book
     book = epub.EpubBook()
@@ -169,6 +154,9 @@ def create_epub(toc_items, chapters_content, metadata, output_path):
         epub_chapters.append(chapter)
         spine.append(chapter)
     
+    for name, path in (images or {}).items():
+        book.add_item(epub.EpubItem(file_name=name, media_type=f"image/{path.suffix.lstrip('.').lower().replace('jpg', 'jpeg')}", content=path.read_bytes()))
+
     # Create table of contents
     book.toc = tuple(epub_chapters)
     
@@ -193,16 +181,21 @@ def main():
     print("\n1. Loading configuration...")
     config = load_config()
     
-    # Construct paths
-    input_folder = Path(config['input_folder'])
-    html_file = input_folder / config['html_file']
-    output_folder = Path(config['output_folder'])
+    # Input is always the ./input folder next to this script
+    root = Path(__file__).parent
+    input_folder = root / "input"
+    html_files = sorted(input_folder.glob("*.html"))
+    if not html_files:
+        print(f"Error: no .html file found in '{input_folder}'!")
+        sys.exit(1)
+    html_file = html_files[0]
+    output_folder = root / config['output_folder']
     output_folder.mkdir(exist_ok=True)
-    
+
     print(f"   Input folder: {input_folder}")
-    print(f"   HTML file: {html_file}")
+    print(f"   HTML file: {html_file.name}")
     print(f"   Output folder: {output_folder}")
-    
+
     # Read HTML
     print("\n2. Reading HTML file...")
     soup = read_html_file(html_file)
@@ -222,22 +215,13 @@ def main():
     
     # Extract chapter contents
     print("\n4. Extracting chapter contents...")
-    chapters_content = []
-    
-    for i, toc_item in enumerate(toc_items):
-        chapter_id = toc_item['id']
-        next_chapter_id = toc_items[i+1]['id'] if i+1 < len(toc_items) else None
-        
-        print(f"   Processing: {toc_item['number']}. {toc_item['title']}")
-        content = extract_chapter_content(soup, chapter_id, next_chapter_id)
-        chapters_content.append(content)
-    
-    print(f"   Extracted {len(chapters_content)} chapters")
-    
+    chapters_content, images = extract_chapters(soup, toc_items, input_folder)
+    print(f"   Extracted {len(chapters_content)} chapters, {len(images)} images")
+
     # Create EPUB
     print("\n5. Creating EPUB file...")
     output_file = output_folder / f"{config['book_metadata']['title']}.epub"
-    create_epub(toc_items, chapters_content, config['book_metadata'], output_file)
+    create_epub(toc_items, chapters_content, config['book_metadata'], output_file, images)
     
     print("\n" + "=" * 60)
     print("Conversion completed successfully!")
